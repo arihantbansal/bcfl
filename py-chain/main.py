@@ -1,103 +1,100 @@
-from flask import Flask, request
+from argparse import ArgumentParser
+
 import flask
-import json
-from Blockchain import Blockchain
+from flask import Flask, request
+
+from blockchain import Blockchain
+
 app = Flask(__name__)
-
-
+address = ''
 blockchain = Blockchain()
 
 
-@app.route("/")
-def home():
-  show_blocks = blockchain.show_blocks()
+@app.route('/')
+def base():
   return flask.jsonify({
-      "message": "Blockchain with PoA",
-      "Blockchain": show_blocks
+      'message': f'running on {address}',
+      'chain': blockchain.blocs
   })
 
-# validators get permission to join the network from project Leadership team
-# by submitting required documents.
 
-
-@app.route("/register/validator", methods=['POST'])
-def register_validator():
-  # payload should have country_id key
+@app.route('/register/authority', methods=['POST'])
+def set_auth():
   payload = request.get_json(force=True)
-  if not payload['country_id']:
+
+  if not payload['peer']:
     return flask.jsonify({
-        "message": "validator country_id is missing ...."
-    })
-  blockchain.add_validator(payload)
+        'message': 'authority\'s address missing'
+    }), 400
+
+  blockchain.set_authority(payload['peer'])
+
   return flask.jsonify({
-      "message": "validator added successfully.."
+      'message': f"authority set at {payload['peer']}"
   })
 
 
-@app.route("/register/peer", methods=["POST"])
-def register_peer():
-  # payload should contain public_key and amount
+@app.route('/register/node', methods=['POST'])
+def new_node():
   payload = request.get_json(force=True)
-  if not payload['public_key'] or not payload['amount']:
+
+  if not payload['peer']:
     return flask.jsonify({
-        "message": "peer public key is missing ...."
-    })
-  blockchain.add_peer(payload)
+        'message': 'peer\'s address missing'
+    }), 400
+
+  blockchain.register(payload['peer'])
+
   return flask.jsonify({
-      "message": "peer added successfully.."
+      'message': f"peer at {payload['peer']} added "
+                 f"(total: {len(blockchain.peers)})"
   })
 
 
-@app.route("/view_all_peers")
-def view_all_peers():
-  peers = blockchain.view_all_peers()
+@app.route('/sync')
+def sync():
+  changed = blockchain.sync()
   return flask.jsonify({
-      "peers": peers
+      'message': 'chain updated' if changed else 'chain up to date'
   })
 
 
-@app.route("/view_all_validators")
-def view_all_validators():
-  validators = blockchain.view_all_validators()
+@app.route('/transaction/create', methods=['POST'])
+def new_transaction():
+  payload = request.get_json(force=True)
+
+  blockchain.new_transaction(
+      sender=address,
+      content=payload
+  )
+
   return flask.jsonify({
-      "validators": validators
-  })
-
-
-@app.route("/view_transaction_pool")
-def view_transaction_pool():
-  transaction_pool = blockchain.view_all_transactions()
-  return flask.jsonify({
-      "transaction_pool": transaction_pool
-  })
-
-
-@app.route("/add_transaction/", methods=['POST'])
-def add_transaction():
-  # transaction should contain sender public key, receiver public key and amount
-  transaction = request.get_json(force=True)
-  if not transaction['sender'] or not transaction['receiver'] or not transaction['amount']:
-    return flask.jsonify({
-        "message": "Transaction format invalid...transaction should contain sender public key , receiver public key and amount.."
-    })
-  blockchain.add_transaction(transaction)
-  return flask.jsonify({
-      "message": "transaction added successfully."
-  })
-
-# validate transactions and add new blocks
-
-
-@app.route("/mine")
-def mine():
-  if not blockchain.mine():
-    return flask.jsonify({
-        "message": "No Validators ...."
-    })
-  return flask.jsonify({
-      "message": "mining successfull."
+      'message': 'transaction added',
+      'content': payload
   })
 
 
 if __name__ == '__main__':
-  app.run(host="127.0.0.1", port="5000")
+  parser = ArgumentParser()
+  parser.add_argument(
+      '-p',
+      '--port',
+      default=5000,
+      type=int,
+      help='port to listen on'
+  )
+  parser.add_argument(
+      '-ht',
+      '--host',
+      default='127.0.0.1',
+      type=str,
+      help='peer\'s host'
+  )
+  args = parser.parse_args()
+
+  port = args.port
+  host = args.host
+
+  address = f'{host}:{port}'
+
+  app.run(host=host, port=port)

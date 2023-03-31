@@ -1,78 +1,81 @@
-# Implementing Blockchain with Proof-of-Authority consensus.
-from hashlib import sha256
-import random
+import json
+import requests
+from _sha256 import sha256
+from time import time
+from typing import Optional
+from urllib.parse import urlparse
+
+
+FORGE_TRIGGER = 1
 
 
 class Blockchain:
-  def __init__(self) -> None:
-    self.peers = []  # set of peers
-    self.validators = []  # set of validators (authorized)
-    self.blocks = []
-    self.transaction_pool = []
-    self.create_genesis_block()
+  def __init__(self):
+    self.authority = None
+    self.blocs = []
+    self.peers = set()
+    self.mempool = []
 
-  def create_genesis_block(self):
-    genesis_block = {
-        "prev_hash": "gensis",
-        "curr_hash": "",
-        "transactions": "",
-        "validator_id": "genesis"  # leadership team will track who added the block
+    self.forge(prev_hash='genesis', curr_hash=None)
+
+  def forge(self, prev_hash: Optional[str], curr_hash: Optional[str]):
+    # noinspection PyDictCreation
+    bloc = {
+        'previous_hash': prev_hash or self.previous_block['current_hash'],
+        'current_hash': '',
+        'timestamp': int(time()),
+        'transactions': self.mempool[:]
     }
-    genesis_block['curr_hash'] = sha256(
-        str(genesis_block).encode()).hexdigest()
-    self.blocks.append(genesis_block)
 
-  def show_blocks(self):
-    return self.blocks
+    bloc['current_hash'] = curr_hash or self.hash(bloc)
 
-  # adding transaction without checking sender and receiver existence (checked in mine fuunction)
-  def add_transaction(self, transaction):
-    self.transaction_pool.append(transaction)
+    self.blocs.append(bloc)
 
-  def add_peer(self, peer):
-    self.peers.append(peer)
+  def new_transaction(self, sender: str, content: dict):
+    if self.authority is not None:
+      requests.post(
+          f'http://{self.authority}/transaction/create',
+          json=content
+      )
+      return
 
-  def add_validator(self, validator):
-    self.validators.append(validator)
+    self.mempool.append({
+        'sender': sender,
+        'content': content
+    })
 
-  def mine(self):
-    # first pick random validator
-    if len(self.validators) == 0:
-      return False
-    validator = random.choice(self.validators)
-    validator_country_id = validator['country_id']
+    if len(self.mempool) == FORGE_TRIGGER:
+      self.forge(prev_hash=None, curr_hash=None)
+      self.mempool.clear()
 
-    valid_transactions = []
-    for transaction in self.transaction_pool:
-      peer_sender = None  # neglecting double spending condition
-      peer_receiver = None
-      for i in range(len(self.peers)):
-        if transaction['sender'] == self.peers[i]['public_key']:
-          peer_sender = i
-        if transaction['receiver'] == self.peers[i]['public_key']:
-          peer_receiver = i
-      if transaction['amount'] > self.peers[peer_sender]['amount'] or peer_sender == None or peer_receiver == None:
-        continue  # skip the transaction
-      self.peers[peer_sender]['amount'] -= transaction['amount']
-      self.peers[peer_receiver]['amount'] += transaction['amount']
-      valid_transactions.append(transaction)
-    new_block = {
-        "transactions": valid_transactions,
-        "prev_hash": "",
-        "curr_hash": "",
-        "validator_id": validator_country_id
-    }
-    new_block['prev_hash'] = self.blocks[-1]['curr_hash']
-    new_block['curr_hash'] = sha256(str(new_block).encode()).hexdigest()
-    self.blocks.append(new_block)
-    self.transaction_pool.clear()
-    return True
+  def register(self, address: str):
+    parsed_url = urlparse(address)
+    self.peers.add(parsed_url.path)
 
-  def view_all_transactions(self):
-    return self.transaction_pool
+  def sync(self) -> bool:
+    changed = False
 
-  def view_all_peers(self):
-    return self.peers
+    for peer in self.peers:
+      r = requests.get(f'http://{peer}/')
 
-  def view_all_validators(self):
-    return self.validators
+      if r.status_code != 200:
+        continue
+
+      chain = r.json()['chain']
+      if len(chain) > len(self.blocs):
+        self.blocs = chain
+        changed = True
+
+    return changed
+
+  @property
+  def previous_block(self) -> dict:
+    return self.blocs[-1]
+
+  @staticmethod
+  def hash(block: dict):
+    to_hash = json.dumps(block)
+    return sha256(to_hash.encode()).hexdigest()
+
+  def set_authority(self, address: str):
+    self.authority = address
